@@ -1,145 +1,153 @@
-# DTP VLAN Hopping Tool - Matricula: 2023-0316 | ITLA
+# DTP VLAN Hopping Tool — Matricula: 2023-0316 | ITLA
 
 ## Objetivo del Laboratorio
-Demostrar dos tecnicas de VLAN Hopping:
-1. **DTP Spoofing**: Enviar tramas DTP falsas para forzar al switch a negociar trunk.
-2. **Doble Encapsulacion 802.1Q**: Enviar frames con dos etiquetas VLAN para saltar a VLANs restringidas.
+Demostrar **VLAN Hopping** mediante DTP Spoofing (forzar trunk en Gig0/1 del SW-L2) y doble encapsulacion 802.1Q para saltar a VLAN 30.
 
-> Solo para uso educativo en entornos de laboratorio controlados.
+---
+
+## Topologia (comun a los 3 ataques)
+
+```
+Internet (8.8.8.8)
+      |
+Router  Fa0/0: 20.23.3.1 (GW)
+        Fa0/1 -> SW-L2
+      |
+SW-L2   Gig0/0: router
+        Gig0/1: Kali Linux  20.23.3.16  [ATACANTE - dynamic auto VULNERABLE]
+        Gig0/2: PC-Victima  20.23.3.50  [VLAN 20]
+        Gig0/3: PC-Admin    20.23.3.65  [VLAN 30 - objetivo del hopping]
+```
+
+### Tabla de interfaces
+
+| Dispositivo | Puerto | Modo | Conectado a | IP |
+|---|---|---|---|---|
+| Router | Fa0/0 | — | Internet | 20.23.3.1 |
+| Router | Fa0/1 | — | SW-L2 Gig0/0 | — |
+| SW-L2 | Gig0/0 | access | Router Fa0/1 | — |
+| SW-L2 | Gig0/1 | **dynamic auto** | Kali eth0 | — |
+| SW-L2 | Gig0/2 | access VLAN 20 | PC-Victima | — |
+| SW-L2 | Gig0/3 | access VLAN 30 | PC-Admin | — |
+| Kali | eth0 | — | SW-L2 Gig0/1 | 20.23.3.16 |
+| PC-Victima | eth0 | — | SW-L2 Gig0/2 | 20.23.3.50 |
+| PC-Admin | eth0 | — | SW-L2 Gig0/3 | 20.23.3.65 |
+
+> Gig0/1 en dynamic auto es el puerto vulnerable para negociacion DTP.
+
+---
+
+## Objetivo del Script
+
+`dtp_vlan_hopping.py` construye tramas DTP con TLVs en modo Desirable, forzando trunk en Gig0/1. Con trunk activo usa doble encapsulacion 802.1Q para saltar a VLAN 30.
+
+**Ruta DTP:**
+```
+Kali eth0 -> SW-L2 Gig0/1 (dynamic auto)
+  Puerto negocia TRUNK -> Kali recibe trafico de todas las VLANs
+```
+
+**Ruta Hopping:**
+```
+Kali eth0 -> [VLAN1][VLAN30] -> SW-L2 Gig0/1
+  SW-L2 despoja etiqueta VLAN1 (nativa)
+  -> reenvía [VLAN30] hacia Gig0/3
+  -> PC-Admin 20.23.3.65 recibe el frame
+```
+
+---
 
 ## Requisitos
-- Linux (Kali Linux recomendado)
-- Python 3.8+
-- pip install scapy
-- Privilegios root/sudo
-- Interfaz conectada a puerto dynamic auto/desirable
 
-## Uso
 ```bash
-# Negociacion DTP (convertir puerto en trunk)
-sudo python3 dtp_vlan_hopping.py -i eth0 -m dtp
-
-# DTP + mantener trunk activo
-sudo python3 dtp_vlan_hopping.py -i eth0 -m dtp -p
-
-# VLAN Hopping con doble encapsulacion
-sudo python3 dtp_vlan_hopping.py -i eth0 -m hopping --vlan-nativa 1 --vlan-objetivo 200 --ip-destino 20.23.3.100
-
-# Ataque completo
-sudo python3 dtp_vlan_hopping.py -i eth0 -m ambos --vlan-nativa 1 --vlan-objetivo 200 -p
+Linux (Kali Linux)
+Python 3.8+
+pip install scapy
+sudo / root
+Kali conectada a SW-L2 Gig0/1 (dynamic auto)
 ```
+
+---
 
 ## Parametros
 
-| Parametro | Descripcion | Default |
+| Parametro | Default | Descripcion |
 |---|---|---|
-| -i / --interfaz | Interfaz de red | eth0 |
-| -m / --modo | dtp, hopping, ambos | requerido |
-| --vlan-nativa | VLAN nativa del trunk | 1 |
-| --vlan-objetivo | VLAN a atacar | 200 |
-| --ip-destino | IP victima en VLAN objetivo | 20.23.3.100 |
-| -p / --persistente | Mantener trunk con re-envio | False |
+| -i | eth0 | Interfaz (SW-L2 Gig0/1) |
+| -m | requerido | dtp, hopping, ambos |
+| --vlan-nativa | 1 | VLAN nativa outer tag |
+| --vlan-objetivo | 30 | VLAN objetivo PC-Admin |
+| --ip-destino | 20.23.3.65 | IP PC-Admin |
+| -p | False | Re-envio periodico trunk |
 
-## Topologia (Matricula: 2023-0316)
-```
-Red Base: 20.23.3.0/24
+---
 
-ATACANTE (20.23.3.16 / Kali Linux)
-   |
-   | eth0 [dynamic auto -> TRUNK despues del ataque]
-   |
-SW-CORE (20.23.3.1)
-   |-- Fa0/2 [access VLAN 10] -- Admin
-   |-- Fa0/3 [access VLAN 30] -- Servidores
-   |-- Fa0/24 [trunk] -- SW-ACC
+## Uso
 
-PC-VICTIMA (20.23.3.100 / VLAN 200) <- objetivo del hopping
+```bash
+# Solo DTP (convertir Gig0/1 en trunk)
+sudo python3 dtp_vlan_hopping.py -m dtp
 
-VLANs:
-  VLAN 10  -> 20.23.3.0/28   Administracion
-  VLAN 20  -> 20.23.3.16/28  Usuarios (atacante)
-  VLAN 30  -> 20.23.3.32/28  Servidores
-  VLAN 200 -> 20.23.3.96/28  Objetivo del hopping
+# DTP + mantener trunk activo
+sudo python3 dtp_vlan_hopping.py -m dtp -p
+
+# Solo hopping doble encapsulacion
+sudo python3 dtp_vlan_hopping.py -m hopping \
+  --vlan-nativa 1 --vlan-objetivo 30 --ip-destino 20.23.3.65
+
+# Ataque completo
+sudo python3 dtp_vlan_hopping.py -m ambos \
+  --vlan-nativa 1 --vlan-objetivo 30 --ip-destino 20.23.3.65 -p
 ```
 
-## Funcionamiento del Script
+---
 
-### Estructura DTP
-```
-Ethernet 802.3 (dst: 01:00:0C:CC:CC:CC)
-  LLC/SNAP (aa aa 03 00 00 0c 20 04)
-    TLV 0x0001: Version = 0x01
-    TLV 0x0002: Domain Name (32 bytes vacios)
-    TLV 0x0003: Status = 0x8142 (Trunk/Desirable)
-    TLV 0x0004: DTP Type = 0x8142 (Desirable)
-    TLV 0x0005: Neighbor ID (MAC del atacante)
-```
+## Configuracion Cisco
 
-### Flujo del Ataque DTP
+### Router
 ```
-Atacante (Desirable)    Switch (dynamic auto)
-      |--- DTP Desirable --->|
-      |                      | Acepta negociacion
-      |<-- DTP Desirable ----|
-      |                      |
-      |    [Trunk negociado]  |
-      |<== VLAN 10 ==========|
-      |<== VLAN 20 ==========| <- Atacante recibe todo
-      |<== VLAN 200 =========|
-```
-
-### Flujo Doble Encapsulacion
-```
-Atacante    SW-Externo      SW-Interno    Victima
-  |--[VLAN1][VLAN200]-->|               (VLAN 200)
-                         | Elimina VLAN1
-                         |--[VLAN200]-->|
-                                        |--frame-->|
-```
-
-## Configuracion Cisco Vulnerable (solo para lab)
-```
+hostname ROUTER
+interface FastEthernet0/0
+ ip address 20.23.3.1 255.255.255.240
+ no shutdown
 interface FastEthernet0/1
- switchport mode dynamic auto
+ no ip address
+ no shutdown
 ```
+
+### SW-L2 (puerto Gig0/1 vulnerable)
+```
+hostname SW-L2
+interface GigabitEthernet0/0
+ switchport mode access
+ no shutdown
+interface GigabitEthernet0/1
+ switchport mode dynamic auto
+ no shutdown
+interface GigabitEthernet0/2
+ switchport mode access
+ switchport access vlan 20
+ no shutdown
+interface GigabitEthernet0/3
+ switchport mode access
+ switchport access vlan 30
+ no shutdown
+vlan 20
+ name Usuarios
+vlan 30
+ name Admin
+```
+
+---
 
 ## Contramediadas
 
-### 1. Deshabilitar DTP (mas importante)
-```
-interface FastEthernet0/1
- switchport mode access
- switchport nonegotiate
-```
-
-### 2. Cambiar VLAN Nativa (contra doble encapsulacion)
-```
-interface FastEthernet0/24
- switchport trunk native vlan 999
-vlan 999
- name VLAN-NATIVA-UNUSED
-```
-
-### 3. Limitar VLANs permitidas en trunk
-```
-interface FastEthernet0/24
- switchport trunk allowed vlan 10,20,30
-```
-
-### 4. Puertos no utilizados
-```
-interface range FastEthernet0/10-24
- shutdown
- switchport mode access
- switchport access vlan 999
-```
-
-| Contramediada | Protege contra | Efectividad |
+| Medida | Comando | Contra |
 |---|---|---|
-| switchport nonegotiate | DTP Spoofing | Alta |
-| switchport mode access | DTP Spoofing | Alta |
-| Cambiar VLAN nativa | Doble encapsulacion | Alta |
-| VLANs permitidas en trunk | Doble encapsulacion | Media |
+| Deshabilitar DTP | switchport nonegotiate | DTP |
+| Modo access fijo | switchport mode access | DTP |
+| Cambiar VLAN nativa | switchport trunk native vlan 999 | Doble encap |
+| Limitar VLANs trunk | switchport trunk allowed vlan 20,30 | Ambos |
 
 ---
 *Laboratorio academico | ITLA | Matricula: 2023-0316*
